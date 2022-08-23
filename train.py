@@ -1,4 +1,7 @@
-from dateset import CIFAR10_CIFAR100_Dataset
+import cv2
+from PIL import Image
+
+from dateset import CIFAR10_CIFAR100_Dataset, CIFAR10_CIFAR100_Dataset_for_visualise
 from utils.image_utils import img_color_denormalize
 from utils.logger import Logger
 from utils.draw_curve import draw_curve
@@ -33,11 +36,11 @@ def main():
     parser = argparse.ArgumentParser(description='Colour Quantisation')
     parser.add_argument('--num_colors', type=int, default=2)
     parser.add_argument('--num_s', type=int, default=2)
-    parser.add_argument('--alpha', type=float, default=1,
+    parser.add_argument('--alpha', type=float, default=0,
                         help='multiplier of regularization terms')
-    parser.add_argument('--beta', type=float, default=0,
+    parser.add_argument('--beta', type=float, default=1,
                         help='multiplier of regularization terms')
-    parser.add_argument('--gamma', type=float, default=0,
+    parser.add_argument('--gamma', type=float, default=1,
                         help='multiplier of reconstruction loss')
     parser.add_argument('--color_jitter', type=float, default=1)
     parser.add_argument('--color_norm', type=float, default=4,
@@ -52,7 +55,7 @@ def main():
                         help='input batch size for training (default: 128)')
     parser.add_argument('--epochs', type=int, default=60,
                         metavar='N', help='number of epochs to train (default: 10)')
-    parser.add_argument('--lr', type=float, default=0.1,
+    parser.add_argument('--lr', type=float, default=0.05,
                         metavar='LR', help='learning rate (default: 0.1)')
     parser.add_argument('--weight_decay', type=float, default=5e-4)
     parser.add_argument('--momentum', type=float, default=0.5,
@@ -82,6 +85,8 @@ def main():
         num_class = 10
         train_set = CIFAR10_CIFAR100_Dataset(dataroot=dataroot, dataset_name='cifar10', mode='train', num_s=args.num_s)
         test_set = CIFAR10_CIFAR100_Dataset(dataroot=dataroot, dataset_name='cifar10', mode='test', num_s=args.num_s)
+        visualise_set = CIFAR10_CIFAR100_Dataset_for_visualise(dataroot=dataroot, dataset_name='cifar10', mode='test',
+                                                               num_s=args.num_s)
     else:
         raise Exception
 
@@ -89,11 +94,15 @@ def main():
                                                num_workers=args.num_workers, pin_memory=True)
     test_loader = torch.utils.data.DataLoader(test_set, batch_size=args.batch_size, shuffle=False,
                                               num_workers=args.num_workers, pin_memory=True)
+
+    visualise_loader = torch.utils.data.DataLoader(visualise_set, batch_size=1, shuffle=False,
+                                                   num_workers=args.num_workers, pin_memory=True)
     time = datetime.datetime.today().strftime('%Y-%m-%d_%H-%M-%S')
     print(time)
-    logdir = 'logs/CQ_HSV/{}/{}_hv_{}s/{}'.format(args.dataset,
-                                                  'full_' if args.num_colors is None else args.num_colors, args.num_s,
-                                                  time)
+    logdir = 'logs/CQ_HSV_RGB/{}/{}_hv_{}s/{}'.format(args.dataset,
+                                                      'full_' if args.num_colors is None else args.num_colors,
+                                                      args.num_s,
+                                                      time)
     if args.resume is None:
         os.makedirs(logdir, exist_ok=True)
         copy_tree('./models', logdir + '/scripts/model')
@@ -130,7 +139,7 @@ def main():
     og_test_loss_s = []
     og_test_prec_s = []
     best_acc = 0
-    trainer = CNNTrainer(model, criterion, args.num_colors,
+    trainer = CNNTrainer(model, criterion, args.num_colors,args.num_s,
                          classifier, args.alpha, args.beta, args.gamma)
 
     # learn
@@ -163,6 +172,33 @@ def main():
             torch.save(classifier.state_dict(), os.path.join(
                 logdir, 'classifier_epoch{}.pth'.format(epoch)))
         print('best acc: {}'.format(best_acc * 100))
+
+
+    save_img_dir = '/home/ssh685/CV_project_ICLR2023/Colour-Quantisation-main/logs/visualise_RGB/{}/{}_hv_{}_s/{}/'.format(
+        args.dataset, args.num_colors, args.num_s,time)
+    if not os.path.exists(save_img_dir):
+        os.makedirs(save_img_dir)
+
+
+    for batch_idx, (rgb, hsv_s_channel, target, class_name, image_name) in enumerate(visualise_loader):
+        model.eval()
+        rgb, hsv_s_channel, target = rgb.cuda(), hsv_s_channel.cuda(), target.cuda()
+        with torch.no_grad():
+            transformed_img_rgb, probability_map = model(rgb, hsv_s_channel, training=False)
+        transformed_img_rgb = transformed_img_rgb.squeeze().permute(1, 2, 0).detach().cpu().numpy()
+        # print(transformed_img_rgb)
+        transformed_img_rgb = transformed_img_rgb + max(-np.min(transformed_img_rgb), 0)
+        transformed_img_max = np.max(transformed_img_rgb)
+        if transformed_img_max != 0:
+            transformed_img_rgb /= transformed_img_max
+        transformed_img_rgb *= 255
+        transformed_img_rgb = transformed_img_rgb.astype('uint8')
+
+        transformed_img_rgb = Image.fromarray(transformed_img_rgb)
+        save_img_class_dir = os.path.join(save_img_dir, class_name[0])
+        if not os.path.exists(save_img_class_dir):
+            os.makedirs(save_img_class_dir)
+        transformed_img_rgb.save(os.path.join(save_img_class_dir, image_name[0]))
 
 
 if __name__ == '__main__':

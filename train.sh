@@ -7,4 +7,11 @@ CUDA_VISIBLE_DEVICES=3 python train.py -d cifar10  --num_colors 4 --num_s 4
 CUDA_VISIBLE_DEVICES=4 python train.py -d cifar10  --num_colors 8 --num_s 4
 CUDA_VISIBLE_DEVICES=5 python train.py -d cifar10  --num_colors 8 --num_s 8
 
+#CUDA_VISIBLE_DEVICES=0 python train.py -d cifar10  --num_colors 2
+#CUDA_VISIBLE_DEVICES=1 python train.py -d cifar10  --num_colors 4
+#CUDA_VISIBLE_DEVICES=2 python train.py -d cifar10  --num_colors 8
+#CUDA_VISIBLE_DEVICES=3 python train.py -d cifar10  --num_colors 16
+#CUDA_VISIBLE_DEVICES=4 python train.py -d cifar10  --num_colors 32
+#CUDA_VISIBLE_DEVICES=5 python train.py -d cifar10  --num_colors 64
+
 

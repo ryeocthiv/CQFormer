@@ -154,7 +154,7 @@ class CIFAR10_CIFAR100_Dataset_for_visualise(Dataset):
         elif self.mode == 'test':
             hsv_s_channel = np.array(hsv)[:, :, 1]
             if self.num_s == 1:
-                hsv_s_channel = np.ones_like(hsv_s_channel) * 128.0
+                hsv_s_channel = np.ones_like(hsv_s_channel) * 16.0
             else:
                 ratio = 255 / self.num_s
                 hsv_s_channel = np.uint8(hsv_s_channel / ratio) * ratio + ratio / 2

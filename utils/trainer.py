@@ -15,7 +15,7 @@ class BaseTrainer(object):
 
 
 class CNNTrainer(BaseTrainer):
-    def __init__(self, model, criterion, num_colors, classifier=None,
+    def __init__(self, model, criterion, num_colors, num_s, classifier=None,
                  alpha=None, beta=None, gamma=None, sample_method=None):
         super(BaseTrainer, self).__init__()
         self.model = model
@@ -27,6 +27,7 @@ class CNNTrainer(BaseTrainer):
         self.reconsturction_loss = nn.MSELoss()
         self.sample_method = sample_method
         self.num_colors = num_colors
+        self.num_s = num_s
 
     def train(self, epoch, data_loader, optimizer, log_interval=100, cyclic_scheduler=None):
 
@@ -40,13 +41,25 @@ class CNNTrainer(BaseTrainer):
             rgb, hsv_s_channel, target = rgb.cuda(), hsv_s_channel.cuda(), target.cuda()
             optimizer.zero_grad()
 
-            transformed_img,probability_map = self.model(rgb, hsv_s_channel, training=True)
+            transformed_img, probability_map = self.model(rgb, hsv_s_channel, training=True)
+            B, _, H, W = rgb.shape
+
+            prob_max, _ = torch.max(probability_map.view([B, self.num_colors, -1]), dim=2)
+            probability_map_mean = torch.mean(probability_map, dim=[2, 3])
+            avg_max = torch.mean(prob_max)
+
+            Shannon_entropy = -probability_map_mean * torch.log2(probability_map_mean)
+            Shannon_entropy = torch.mean(Shannon_entropy)
+
+            # colour_loss = torch.mean((rgb - transformed_img) ** 2)
+
             output = self.classifier(transformed_img)
             pred = torch.argmax(output, 1)
             correct += pred.eq(target).sum().item()
             miss += target.shape[0] - pred.eq(target).sum().item()
 
-            loss = self.criterion(output, target)
+            loss = self.criterion(output, target) + self.alpha * self.num_colors * self.num_s * np.log2(
+                self.num_colors * self.num_s) * (1 - avg_max) - self.beta * Shannon_entropy + self.gamma * self.reconsturction_loss(rgb,transformed_img)
             loss.backward()
             optimizer.step()
             losses += loss.item()
@@ -78,7 +91,7 @@ class CNNTrainer(BaseTrainer):
         for batch_idx, (rgb, hsv_s_channel, target) in enumerate(test_loader):
             rgb, hsv_s_channel, target = rgb.cuda(), hsv_s_channel.cuda(), target.cuda()
             with torch.no_grad():
-                transformed_img,probability_map = self.model(rgb, hsv_s_channel, training=False)
+                transformed_img, probability_map = self.model(rgb, hsv_s_channel, training=False)
                 output = self.classifier(transformed_img)
             pred = torch.argmax(output, 1)
             correct += pred.eq(target).sum().item()

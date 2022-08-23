@@ -34,10 +34,10 @@ os.environ['OMP_NUM_THREADS'] = '1'
 def main():
     # settings
     parser = argparse.ArgumentParser(description='Colour Quantisation')
-    parser.add_argument('--num_colors', type=int, default=8)
-    parser.add_argument('--num_s', type=int, default=4)
+    parser.add_argument('--num_colors', type=int, default=2)
+    parser.add_argument('--num_s', type=int, default=2)
     parser.add_argument('--log_dir', type=str,
-                        default='/home/ssh685/CV_project_ICLR2023/Colour-Quantisation-main/logs/CQ_HSV/cifar10/8_hv_4s/2022-08-21_00-08-21/CQ_epoch60.pth')
+                        default='/home/ssh685/CV_project_ICLR2023/Colour-Quantisation-main/logs/CQ_HSV_RGB/cifar10/2_hv_2s/2022-08-22_16-02-37/CQ_epoch60.pth')
     parser.add_argument('-d', '--dataset', type=str, default='cifar10',
                         choices=['cifar10', 'cifar100', 'stl10', 'svhn', 'imagenet', 'tiny200'])
     parser.add_argument('--seed', type=int, default=0,
@@ -75,7 +75,7 @@ def main():
     log_dict = torch.load(log_dir, map_location='cuda')
     model.load_state_dict(log_dict)
 
-    save_img_dir = '/home/ssh685/CV_project_ICLR2023/Colour-Quantisation-main/logs/visualise/{}/{}_hv_{}_s/'.format(
+    save_img_dir = '/home/ssh685/CV_project_ICLR2023/Colour-Quantisation-main/logs/visualise_RGB/{}/{}_hv_{}_s/'.format(
         args.dataset, args.num_colors, args.num_s)
     if not os.path.exists(save_img_dir):
         os.makedirs(save_img_dir)
@@ -84,15 +84,16 @@ def main():
         model.eval()
         rgb, hsv_s_channel, target = rgb.cuda(), hsv_s_channel.cuda(), target.cuda()
         with torch.no_grad():
-            transformed_img_hsv, probability_map = model(rgb, hsv_s_channel, training=False)
-        transformed_img_hsv = transformed_img_hsv.squeeze().permute(1, 2, 0).detach().cpu().numpy()
-        transformed_img_hsv = transformed_img_hsv + max(-np.min(transformed_img_hsv), 0)
-        transformed_img_max = np.max(transformed_img_hsv)
+            transformed_img_rgb, probability_map = model(rgb, hsv_s_channel, training=False)
+        transformed_img_rgb = transformed_img_rgb.squeeze().permute(1, 2, 0).detach().cpu().numpy()
+        # print(transformed_img_rgb)
+        transformed_img_rgb = transformed_img_rgb + max(-np.min(transformed_img_rgb), 0)
+        transformed_img_max = np.max(transformed_img_rgb)
         if transformed_img_max != 0:
-            transformed_img_hsv /= transformed_img_max
-        transformed_img_hsv *= 255
-        transformed_img_hsv = transformed_img_hsv.astype('uint8')
-        transformed_img_rgb = cv2.cvtColor(transformed_img_hsv, cv2.COLOR_HSV2RGB_FULL)
+            transformed_img_rgb /= transformed_img_max
+        transformed_img_rgb *= 255
+        transformed_img_rgb = transformed_img_rgb.astype('uint8')
+
         transformed_img_rgb = Image.fromarray(transformed_img_rgb)
         save_img_class_dir = os.path.join(save_img_dir, class_name[0])
         if not os.path.exists(save_img_class_dir):

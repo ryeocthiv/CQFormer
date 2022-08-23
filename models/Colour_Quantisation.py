@@ -12,7 +12,7 @@ import torch
 import torch.nn as nn
 from einops import rearrange, repeat
 from models.MST_Plus_Plus import MST_Plus_Plus
-from models.UNeXt import UNext_S
+from models.UNeXt import UNext_S, UNext
 from timm.models.layers import trunc_normal_, DropPath, to_2tuple
 import torch.nn.functional as F
 import cv2
@@ -81,7 +81,7 @@ class Query_Attention(nn.Module):
         # NOTE scale factor was wrong in my original version, can set manually to be compat with prev weights
         self.scale = qk_scale or head_dim ** -0.5
 
-        self.q = nn.Parameter(torch.ones((1, num_colours, dim)), requires_grad=True)
+        self.q = nn.Parameter(torch.randn((1, num_colours, dim)), requires_grad=True)
         self.k = nn.Linear(dim, dim, bias=qkv_bias)
         self.v = nn.Linear(dim, dim, bias=qkv_bias)
         self.attn_drop = nn.Dropout(attn_drop)
@@ -95,14 +95,22 @@ class Query_Attention(nn.Module):
         k = self.k(x).reshape(B, N, self.num_heads, C // self.num_heads).permute(0, 2, 1, 3)
         v = self.v(x).reshape(B, N, self.num_heads, C // self.num_heads).permute(0, 2, 1, 3)
 
-        q = self.q.expand(B, -1, -1).view(B, -1, self.num_heads, C // self.num_heads).permute(0, 2, 1, 3)
-        attn = (q @ k.transpose(-2, -1)) * self.scale
-        attn = attn.softmax(dim=-1)
-        attn = self.attn_drop(attn)
+        q = self.q.expand(B, -1, -1)
 
+        q = q.view(B, -1, self.num_heads, C // self.num_heads).permute(0, 2, 1, 3)
+        # print(q)
+        attn = (q @ k.transpose(-2, -1)) * self.scale
+        # print(attn)
+        attn = attn.softmax(dim=-1)
+
+        attn = self.attn_drop(attn)
+        # print(attn)
         x = (attn @ v).transpose(1, 2).reshape(B, self.num_colours, C)
+
         x = self.proj(x)
+
         x = self.proj_drop(x)
+
         return x
 
 
@@ -132,17 +140,17 @@ class Colour_Cluster_Transformer(nn.Module):
 
 
 class Colour_Quantisation(nn.Module):
-    def __init__(self, temperature=0.01, num_colours=2, num_heads=4, dim=128):
+    def __init__(self, temperature=0.1, num_colours=2, num_heads=4, dim=160):
         super().__init__()
         self.num_colors = num_colours
         self.Spectral_Reconstruction = MST_Plus_Plus()
         self.Spectral_Reconstruction.load_state_dict(
             torch.load(
                 '/home/ssh685/CV_project_ICLR2023/Colour-Quantisation-main/models/pretrain_model/mst_plus_plus.pth',
-                map_location='cpu')['state_dict'])
+                map_location='cuda')['state_dict'])
 
         self.LMS_Projection = LMS_Projection()
-        self.Image_Encoder = UNext_S(num_classes=num_colours)
+        self.Image_Encoder = UNext(num_classes=num_colours)
         self.temperature = temperature
         self.Colour_Cluster_Transformer = Colour_Cluster_Transformer(dim=dim,
                                                                      num_colours=num_colours,
@@ -152,34 +160,65 @@ class Colour_Quantisation(nn.Module):
         self.convertor = RGB_HSV()
 
     def forward(self, x_RGB, hsv_s_channel, training=True):
+        # x_HSV = self.convertor.rgb_to_hsv(x_RGB)
         HSI = self.Spectral_Reconstruction(x_RGB)
         LMS = self.LMS_Projection(HSI)
         probability_map, low_resolution_feature = self.Image_Encoder(LMS)
         updated_colour_query = self.Colour_Cluster_Transformer(low_resolution_feature)  # torch.Size([3, 4, 128])
+        # print(torch.mean(updated_colour_query,dim=0))
         hv = self.Colour_Coordinate_Projection(updated_colour_query)  # torch.Size([3, 4, 2])
-        hv = self.sigmoid(hv)  # torch.Size([3, 4, 2])
-
+        hv = self.sigmoid(hv)  # torch.Size([3, 4, 3])
+        # print(hv)
         if training:
             probability_map = F.softmax(probability_map / self.temperature, dim=1)  # torch.Size([3, 4, 256, 256])
+
             transformed_img_h = (probability_map * hv[:, :, 0].unsqueeze(-1).unsqueeze(-1)).sum(dim=1)
             transformed_img_v = (probability_map * hv[:, :, 1].unsqueeze(-1).unsqueeze(-1)).sum(dim=1)
-
             transformed_img = torch.cat(
                 (transformed_img_h.unsqueeze(1), hsv_s_channel.unsqueeze(1), transformed_img_v.unsqueeze(1)), dim=1)
+            transformed_img = self.convertor.hsv_to_rgb(transformed_img)
+
+            # transformed_img_r = (probability_map * hv[:, :, 0].unsqueeze(-1).unsqueeze(-1)).sum(dim=1)
+            # transformed_img_g = (probability_map * hv[:, :, 1].unsqueeze(-1).unsqueeze(-1)).sum(dim=1)
+            # transformed_img_b = (probability_map * hv[:, :, 2].unsqueeze(-1).unsqueeze(-1)).sum(dim=1)
+            # transformed_img = torch.cat(
+            #     (transformed_img_r.unsqueeze(1), transformed_img_g.unsqueeze(1), transformed_img_b.unsqueeze(1)), dim=1)
+
             return transformed_img, probability_map
         else:
+            # probability_map = F.softmax(probability_map / self.temperature, dim=1)  # torch.Size([3, 4, 256, 256])
+            #
+            # transformed_img_h = (probability_map * hv[:, :, 0].unsqueeze(-1).unsqueeze(-1)).sum(dim=1)
+            # transformed_img_v = (probability_map * hv[:, :, 1].unsqueeze(-1).unsqueeze(-1)).sum(dim=1)
+            # transformed_img = torch.cat(
+            #     (transformed_img_h.unsqueeze(1), hsv_s_channel.unsqueeze(1), transformed_img_v.unsqueeze(1)), dim=1)
+            # transformed_img = self.convertor.hsv_to_rgb(transformed_img)
             probability_map = F.softmax(probability_map, dim=1)  # torch.Size([3, 4, 256, 256])
             index_map = torch.argmax(probability_map, dim=1, keepdim=True)
             index_map_one_hot = torch.zeros_like(probability_map).scatter(1, index_map, 1)
+
             transformed_img_h = (index_map_one_hot * hv[:, :, 0].unsqueeze(-1).unsqueeze(-1)).sum(dim=1)
             transformed_img_v = (index_map_one_hot * hv[:, :, 1].unsqueeze(-1).unsqueeze(-1)).sum(dim=1)
             transformed_img = torch.cat(
                 (transformed_img_h.unsqueeze(1), hsv_s_channel.unsqueeze(1), transformed_img_v.unsqueeze(1)), dim=1)
+            transformed_img = self.convertor.hsv_to_rgb(transformed_img)
+
+            # transformed_img_r = (index_map_one_hot * hv[:, :, 0].unsqueeze(-1).unsqueeze(-1)).sum(dim=1)
+            # transformed_img_g = (index_map_one_hot * hv[:, :, 1].unsqueeze(-1).unsqueeze(-1)).sum(dim=1)
+            # transformed_img_b = (index_map_one_hot * hv[:, :, 2].unsqueeze(-1).unsqueeze(-1)).sum(dim=1)
+            # transformed_img = torch.cat(
+            #     (transformed_img_r.unsqueeze(1), transformed_img_g.unsqueeze(1), transformed_img_b.unsqueeze(1)), dim=1)
+
             return transformed_img, probability_map
 
 
 if __name__ == "__main__":
-    img = torch.randn((2, 3, 256, 256))
+    img = torch.randn((2, 3, 32, 32))
     model = Colour_Quantisation(num_colours=2)
-    output = model(img, img[:, 1, :, :], training=False)
-    print(output)
+    transformed_img, probability_map = model(img, img[:, 1, :, :], training=True)
+    prob_mean = torch.mean(probability_map, dim=[2, 3])
+
+    Shannon_entropy = -prob_mean * torch.log2(prob_mean)
+    Shannon_entropy = torch.mean(Shannon_entropy)
+    print(prob_mean)
+    print(Shannon_entropy)

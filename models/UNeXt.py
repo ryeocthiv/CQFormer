@@ -293,7 +293,7 @@ class UNext(nn.Module):
         out = self.norm3(out)
         out = out.reshape(B, H, W, -1).permute(0, 3, 1, 2).contiguous()
         t4 = out
-
+        low_resolution_feature = out
         ### Bottleneck
 
         out, H, W = self.patch_embed4(out)
@@ -333,7 +333,7 @@ class UNext(nn.Module):
         out = torch.add(out, t1)
         out = F.relu(F.interpolate(self.decoder5(out), scale_factor=(2, 2), mode='bilinear'))
 
-        return self.final(out)
+        return self.final(out),low_resolution_feature
 
 
 class UNext_S(nn.Module):
@@ -428,7 +428,7 @@ class UNext_S(nn.Module):
         out = self.norm3(out)
         out = out.reshape(B, H, W, -1).permute(0, 3, 1, 2).contiguous()
         t4 = out
-
+        low_resolution_feature = out
         ### Bottleneck
 
         out, H, W = self.patch_embed4(out)
@@ -436,7 +436,7 @@ class UNext_S(nn.Module):
             out = blk(out, H, W)
         out = self.norm4(out)
         out = out.reshape(B, H, W, -1).permute(0, 3, 1, 2).contiguous()
-        low_resolution_feature = out
+        # low_resolution_feature = out
         ### Stage 4
 
         out = F.relu(F.interpolate(self.dbn1(self.decoder1(out)), scale_factor=(2, 2), mode='bilinear'))
@@ -475,8 +475,8 @@ class UNext_S(nn.Module):
 
 
 if __name__ == '__main__':
-    img = torch.randn((3, 3, 256, 256))
-    model = UNext_S(num_classes=4)
+    img = torch.randn((3, 3, 32, 32))
+    model = UNext(num_classes=4)
     output, low_resolution_feature = model(img)
     print(output.shape)
     print(low_resolution_feature.shape)
