@@ -1,13 +1,12 @@
 import cv2
 from PIL import Image
 
-from dateset import CIFAR10_CIFAR100_Dataset, CIFAR10_CIFAR100_Dataset_for_visualise
+from dateset import *
 from utils.image_utils import img_color_denormalize
 from utils.logger import Logger
 from utils.draw_curve import draw_curve
 from utils.load_checkpoint import checkpoint_loader
-from utils.trainer import CNNTrainer
-# from loss.label_smooth import LSR_loss
+from utils.trainer import CNNTrainer_1
 import utils.transforms as T
 from torchvision import datasets
 import torch.utils.data
@@ -35,35 +34,28 @@ def main():
     # settings
     parser = argparse.ArgumentParser(description='Colour Quantisation')
     parser.add_argument('--num_colors', type=int, default=2)
-    parser.add_argument('--num_s', type=int, default=2)
-    parser.add_argument('--alpha', type=float, default=0,
+    parser.add_argument('--alpha', type=float, default=1,
                         help='multiplier of regularization terms')
-    parser.add_argument('--beta', type=float, default=1,
+    parser.add_argument('--beta', type=float, default=0.5,
                         help='multiplier of regularization terms')
     parser.add_argument('--gamma', type=float, default=1,
                         help='multiplier of reconstruction loss')
-    parser.add_argument('--color_jitter', type=float, default=1)
-    parser.add_argument('--color_norm', type=float, default=4,
-                        help='normalizer for color palette')
-    parser.add_argument('--label_smooth', type=float, default=0.0)
-    parser.add_argument('--soften', type=float, default=1,
+    parser.add_argument('--temperature', type=float, default=0.05,
                         help='soften coefficient for softmax')
-    parser.add_argument('-d', '--dataset', type=str, default='cifar10',
+    parser.add_argument('-d', '--dataset', type=str, default='cifar100',
                         choices=['cifar10', 'cifar100', 'stl10', 'svhn', 'imagenet', 'tiny200'])
-    parser.add_argument('-j', '--num_workers', type=int, default=4)
+    parser.add_argument('-j', '--num_workers', type=int, default=8)
     parser.add_argument('-b', '--batch_size', type=int, default=256, metavar='N',
                         help='input batch size for training (default: 128)')
-    parser.add_argument('--epochs', type=int, default=60,
+    parser.add_argument('--epochs', type=int, default=200,
                         metavar='N', help='number of epochs to train (default: 10)')
     parser.add_argument('--lr', type=float, default=0.05,
                         metavar='LR', help='learning rate (default: 0.1)')
-    parser.add_argument('--weight_decay', type=float, default=5e-4)
+    parser.add_argument('--weight_decay', type=float, default=0.001)
     parser.add_argument('--momentum', type=float, default=0.5,
                         metavar='M', help='SGD momentum (default: 0.5)')
     parser.add_argument('--log_interval', type=int, default=100, metavar='N',
                         help='how many batches to wait before logging training status')
-    parser.add_argument('--backbone', type=str,
-                        default='unet', choices=['unet', 'dncnn'])
     parser.add_argument('--resume', type=str, default=None)
     parser.add_argument('--seed', type=int, default=0,
                         help='random seed (default: None)')
@@ -77,16 +69,43 @@ def main():
         torch.backends.cudnn.benchmark = False
     else:
         torch.backends.cudnn.benchmark = True
-    device = torch.device('cuda')
+
     # dataset
-    dataroot = os.path.expanduser('/home/ssh685/CV_project_ICLR2023/Colour-Quantisation-main/Data/')
+    data_path = os.path.expanduser('/home/ssh685/CV_project_ICLR2023/Colour-Quantisation-main/Data/') + args.dataset
     # dataroot = '/home/ssh685/CV_project_ICLR2023/Colour-Quantisation-main/Data/'
-    if args.dataset == 'cifar10':
+
+    if args.dataset == 'cifar10' or args.dataset == 'cifar100':
+        H, W, C = 32, 32, 3
+        num_class = 10 if args.dataset == 'cifar10' else 100
+
+        normalize = T.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))
+        train_trans = T.Compose([T.RandomCrop(32, padding=4), T.RandomHorizontalFlip(), T.ToTensor(), ])
+        test_trans = T.Compose([T.ToTensor(), ])
+
+        if args.dataset == 'cifar10':
+            train_set = datasets.CIFAR10(data_path, train=True, download=True, transform=train_trans)
+            test_set = datasets.CIFAR10(data_path, train=False, download=True, transform=test_trans)
+        else:
+            train_set = datasets.CIFAR100(data_path, train=True, download=True, transform=train_trans)
+            test_set = datasets.CIFAR100(data_path, train=False, download=True, transform=test_trans)
+    elif args.dataset == 'stl10':
+        H, W, C = 96, 96, 3
         num_class = 10
-        train_set = CIFAR10_CIFAR100_Dataset(dataroot=dataroot, dataset_name='cifar10', mode='train', num_s=args.num_s)
-        test_set = CIFAR10_CIFAR100_Dataset(dataroot=dataroot, dataset_name='cifar10', mode='test', num_s=args.num_s)
-        visualise_set = CIFAR10_CIFAR100_Dataset_for_visualise(dataroot=dataroot, dataset_name='cifar10', mode='test',
-                                                               num_s=args.num_s)
+        # smaller batch size
+        normalize = T.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
+        train_trans = T.Compose([T.RandomCrop(96, padding=12), T.RandomHorizontalFlip(), T.ToTensor(), ])
+        test_trans = T.Compose([T.ToTensor(), ])
+        train_set = datasets.STL10(data_path, split='train', download=True, transform=train_trans)
+        test_set = datasets.STL10(data_path, split='test', download=True, transform=test_trans)
+    elif args.dataset == 'tiny200':
+        H, W, C = 64, 64, 3
+        num_class = 200
+        normalize = T.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
+        train_trans = T.Compose([T.RandomCrop(64, padding=8), T.RandomHorizontalFlip(), T.ToTensor(), ])
+        test_trans = T.Compose([T.ToTensor(),])
+
+        train_set = datasets.ImageFolder('/home/ssh685/CV_project_AAAI2023/color_distillation-master/Data/tiny200/train', transform=train_trans)
+        test_set = datasets.ImageFolder('/home/ssh685/CV_project_AAAI2023/color_distillation-master/Data/tiny200/val', transform=test_trans)
     else:
         raise Exception
 
@@ -95,14 +114,11 @@ def main():
     test_loader = torch.utils.data.DataLoader(test_set, batch_size=args.batch_size, shuffle=False,
                                               num_workers=args.num_workers, pin_memory=True)
 
-    visualise_loader = torch.utils.data.DataLoader(visualise_set, batch_size=1, shuffle=False,
+    visualise_loader = torch.utils.data.DataLoader(test_set, batch_size=1, shuffle=False,
                                                    num_workers=args.num_workers, pin_memory=True)
     time = datetime.datetime.today().strftime('%Y-%m-%d_%H-%M-%S')
     print(time)
-    logdir = 'logs/CQ_HSV_RGB/{}/{}_hv_{}s/{}'.format(args.dataset,
-                                                      'full_' if args.num_colors is None else args.num_colors,
-                                                      args.num_s,
-                                                      time)
+    logdir = 'logs/CQ/{}/{}_colours/{}/'.format(args.dataset, args.num_colors, time)
     if args.resume is None:
         os.makedirs(logdir, exist_ok=True)
         copy_tree('./models', logdir + '/scripts/model')
@@ -116,7 +132,7 @@ def main():
     print(vars(args))
 
     # model
-    model = Colour_Quantisation(num_colours=args.num_colors).cuda()
+    model = Colour_Quantisation(temperature=args.temperature, num_colours=args.num_colors).cuda()
     for param in model.Spectral_Reconstruction.parameters():
         param.requires_grad = False
     for param in model.LMS_Projection.parameters():
@@ -124,9 +140,7 @@ def main():
     classifier = ResNet18(out_channel=num_class).cuda()
     optimizer = optim.SGD(list(model.parameters()) + list(classifier.parameters()),
                           lr=args.lr, momentum=args.momentum, weight_decay=args.weight_decay)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, 60, 1)
-    # scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=args.lr,
-    #                                                 steps_per_epoch=len(train_loader), epochs=args.epochs)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, 50, 1)
 
     # loss
 
@@ -139,7 +153,7 @@ def main():
     og_test_loss_s = []
     og_test_prec_s = []
     best_acc = 0
-    trainer = CNNTrainer(model, criterion, args.num_colors,args.num_s,
+    trainer = CNNTrainer_1(model, criterion, args.num_colors,
                          classifier, args.alpha, args.beta, args.gamma)
 
     # learn
@@ -161,10 +175,8 @@ def main():
                    og_test_loss_s, og_test_prec_s)
         if og_test_prec > best_acc:
             best_acc = og_test_prec
-            torch.save(model.state_dict(), os.path.join(
-                logdir, 'CQ_best_epoch_{}_acc_{}.pth'.format(epoch, best_acc * 100)))
-            torch.save(classifier.state_dict(), os.path.join(
-                logdir, 'classifier_best_epoch_{}_acc_{}.pth'.format(epoch, best_acc * 100)))
+            torch.save(model.state_dict(), os.path.join(logdir, 'CQ_best.pth'))
+            torch.save(classifier.state_dict(), os.path.join(logdir, 'classifier_best'))
         if epoch % 20 == 0:
             # save
             torch.save(model.state_dict(), os.path.join(
@@ -172,21 +184,17 @@ def main():
             torch.save(classifier.state_dict(), os.path.join(
                 logdir, 'classifier_epoch{}.pth'.format(epoch)))
         print('best acc: {}'.format(best_acc * 100))
-
-
-    save_img_dir = '/home/ssh685/CV_project_ICLR2023/Colour-Quantisation-main/logs/visualise_RGB/{}/{}_hv_{}_s/{}/'.format(
-        args.dataset, args.num_colors, args.num_s,time)
+    save_img_dir = 'logs/visualise_RGB/{}/{}_colours/{}/'.format(
+        args.dataset, args.num_colors, time)
     if not os.path.exists(save_img_dir):
         os.makedirs(save_img_dir)
 
-
-    for batch_idx, (rgb, hsv_s_channel, target, class_name, image_name) in enumerate(visualise_loader):
+    for batch_idx, (rgb, hsv, target, class_name, image_name) in enumerate(visualise_loader):
         model.eval()
-        rgb, hsv_s_channel, target = rgb.cuda(), hsv_s_channel.cuda(), target.cuda()
+        rgb, hsv, target = rgb.cuda(), hsv.cuda(), target.cuda()
         with torch.no_grad():
-            transformed_img_rgb, probability_map = model(rgb, hsv_s_channel, training=False)
+            transformed_img_rgb, _ = model(rgb, training=False)
         transformed_img_rgb = transformed_img_rgb.squeeze().permute(1, 2, 0).detach().cpu().numpy()
-        # print(transformed_img_rgb)
         transformed_img_rgb = transformed_img_rgb + max(-np.min(transformed_img_rgb), 0)
         transformed_img_max = np.max(transformed_img_rgb)
         if transformed_img_max != 0:

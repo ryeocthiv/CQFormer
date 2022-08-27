@@ -315,6 +315,7 @@ class UNext(nn.Module):
         ### Stage 3
 
         out = self.dnorm3(out)
+
         out = out.reshape(B, H, W, -1).permute(0, 3, 1, 2).contiguous()
         out = F.relu(F.interpolate(self.dbn2(self.decoder2(out)), scale_factor=(2, 2), mode='bilinear'))
         out = torch.add(out, t3)
@@ -475,7 +476,7 @@ class UNext_S(nn.Module):
 
 
 if __name__ == '__main__':
-    img = torch.randn((3, 3, 32, 32))
+    img = torch.randn((3, 3, 64, 64))
     model = UNext(num_classes=4)
     output, low_resolution_feature = model(img)
     print(output.shape)

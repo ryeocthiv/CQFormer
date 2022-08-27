@@ -1,3 +1,5 @@
+import math
+
 import cv2
 from PIL import Image
 
@@ -101,5 +103,50 @@ def main():
         transformed_img_rgb.save(os.path.join(save_img_class_dir, image_name[0]))
 
 
+def HSVDistance(hsv_1, hsv_2):
+    H_1, S_1, V_1 = hsv_1.split(1, dim=1)
+    H_2, S_2, V_2 = hsv_2.split(1, dim=1)
+    H_1 = H_1 * 360
+    H_2 = H_2 * 360
+    R = 100
+    angle = 30
+    h = R * math.cos(angle / 180 * math.pi)
+    r = R * math.sin(angle / 180 * math.pi)
+    x1 = r * V_1 * S_1 * torch.cos(H_1 / 180 * torch.pi)
+    y1 = r * V_1 * S_1 * torch.sin(H_1 / 180 * torch.pi)
+    z1 = h * (1 - V_1)
+    x2 = r * V_2 * S_2 * torch.cos(H_2 / 180 * torch.pi)
+    y2 = r * V_2 * S_2 * torch.sin(H_2 / 180 * torch.pi)
+    z2 = h * (1 - V_2)
+    dx = x1 - x2
+    dy = y1 - y2
+    dz = z1 - z2
+    return torch.sqrt(dx * dx + dy * dy + dz * dz)
+def HSVDistance1(hsv_1, hsv_2):
+    H_1, S_1, V_1 = hsv_1
+    H_2, S_2, V_2 = hsv_2
+    H_1 = H_1 * 360
+    H_2 = H_2 * 360
+    R = 1
+    angle = 30
+    h = R * math.cos(angle / 180 * math.pi)
+    r = R * math.sin(angle / 180 * math.pi)
+    x1 = r * V_1 * S_1 * torch.cos(H_1 / 180 * torch.pi)
+    y1 = r * V_1 * S_1 * torch.sin(H_1 / 180 * torch.pi)
+    z1 = h * (1 - V_1)
+    x2 = r * V_2 * S_2 * torch.cos(H_2 / 180 * torch.pi)
+    y2 = r * V_2 * S_2 * torch.sin(H_2 / 180 * torch.pi)
+    z2 = h * (1 - V_2)
+    dx = x1 - x2
+    dy = y1 - y2
+    dz = z1 - z2
+    return torch.sqrt(dx * dx + dy * dy + dz * dz)
+
 if __name__ == '__main__':
-    main()
+    hsv_1 = torch.tensor([0,1,0.1])
+    hsv_2 = torch.tensor([0.5,0.5,0.5])
+    hsv_3 = torch.tensor([0.95,0.5,0.5])
+    # main()
+    print('AB',HSVDistance1(hsv_1, hsv_2))
+    print('AC',HSVDistance1(hsv_1, hsv_3))
+    print('BC',HSVDistance1(hsv_2, hsv_3))
