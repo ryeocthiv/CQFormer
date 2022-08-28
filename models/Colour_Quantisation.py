@@ -18,6 +18,23 @@ import torch.nn.functional as F
 import cv2
 from convert_RGB_HSV import RGB_HSV
 
+class conv_embedding(nn.Module):
+    def __init__(self, in_channels, out_channels):
+        super(conv_embedding, self).__init__()
+        self.proj = nn.Sequential(
+            nn.Conv2d(in_channels, out_channels // 2, kernel_size=(3, 3), stride=(2, 2), padding=(1, 1)),
+            nn.BatchNorm2d(out_channels // 2),
+            nn.GELU(),
+            # nn.Conv2d(out_channels // 2, out_channels // 2, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1)),
+            # nn.BatchNorm2d(out_channels // 2),
+            # nn.GELU(),
+            nn.Conv2d(out_channels // 2, out_channels, kernel_size=(3, 3), stride=(2, 2), padding=(1, 1)),
+            nn.BatchNorm2d(out_channels),
+        )
+
+    def forward(self, x):
+        x = self.proj(x)
+        return x
 
 class Mlp(nn.Module):
     # taken from https://github.com/rwightman/pytorch-image-models/blob/master/timm/models/vision_transformer.py
@@ -94,23 +111,48 @@ class Query_Attention(nn.Module):
         B, N, C = x.shape
         k = self.k(x).reshape(B, N, self.num_heads, C // self.num_heads).permute(0, 2, 1, 3)
         v = self.v(x).reshape(B, N, self.num_heads, C // self.num_heads).permute(0, 2, 1, 3)
-
         q = self.q.expand(B, -1, -1)
-
         q = q.view(B, -1, self.num_heads, C // self.num_heads).permute(0, 2, 1, 3)
-        # print(q)
         attn = (q @ k.transpose(-2, -1)) * self.scale
-        # print(attn)
         attn = attn.softmax(dim=-1)
-
         attn = self.attn_drop(attn)
-        # print(attn)
         x = (attn @ v).transpose(1, 2).reshape(B, self.num_colours, C)
-
         x = self.proj(x)
-
         x = self.proj_drop(x)
+        return x
 
+
+class Subsequent_Query_Attention(nn.Module):
+    def __init__(self, dim, input_q_dim, num_colours, num_heads=1, qkv_bias=False, qk_scale=None, attn_drop=0.,
+                 proj_drop=0.):
+        super().__init__()
+        self.num_heads = num_heads
+        head_dim = dim // num_heads
+        # NOTE scale factor was wrong in my original version, can set manually to be compat with prev weights
+        self.scale = qk_scale or head_dim ** -0.5
+
+        # self.q = nn.Parameter(torch.randn((1, num_colours, dim)), requires_grad=True)
+        self.q = nn.Linear(input_q_dim, dim, bias=qkv_bias)
+        self.k = nn.Linear(dim, dim, bias=qkv_bias)
+        self.v = nn.Linear(dim, dim, bias=qkv_bias)
+        self.attn_drop = nn.Dropout(attn_drop)
+        self.proj = nn.Linear(dim, dim)
+        self.proj_drop = nn.Dropout(proj_drop)
+
+        self.num_colours = num_colours
+
+    def forward(self, x, q):
+        B, N, C = x.shape
+        q = self.q(q)
+        q = q.view(B, -1, self.num_heads, C // self.num_heads).permute(0, 2, 1, 3)
+        k = self.k(x).reshape(B, N, self.num_heads, C // self.num_heads).permute(0, 2, 1, 3)
+        v = self.v(x).reshape(B, N, self.num_heads, C // self.num_heads).permute(0, 2, 1, 3)
+        attn = (q @ k.transpose(-2, -1)) * self.scale
+        attn = attn.softmax(dim=-1)
+        attn = self.attn_drop(attn)
+        x = (attn @ v).transpose(1, 2).reshape(B, self.num_colours, C)
+        x = self.proj(x)
+        x = self.proj_drop(x)
         return x
 
 
@@ -139,8 +181,35 @@ class Colour_Cluster_Transformer(nn.Module):
         return x
 
 
+class Subsequent_Colour_Cluster_Transformer(nn.Module):
+    def __init__(self, dim, input_q_dim, num_colours, num_heads, mlp_ratio=4., qkv_bias=False, qk_scale=None, drop=0.,
+                 attn_drop=0.,
+                 drop_path=0., act_layer=nn.GELU, norm_layer=nn.LayerNorm):
+        super().__init__()
+        self.pos_embed = nn.Conv2d(dim, dim, 3, padding=1, groups=dim)
+        self.norm1 = norm_layer(dim)
+        self.attn = Subsequent_Query_Attention(
+            dim=dim,
+            input_q_dim=input_q_dim,
+            num_colours=num_colours,
+            num_heads=num_heads, qkv_bias=qkv_bias, qk_scale=qk_scale,
+            attn_drop=attn_drop, proj_drop=drop)
+        # NOTE: drop path for stochastic depth, we shall see if this is better than dropout here
+        self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
+        self.norm2 = norm_layer(dim)
+        mlp_hidden_dim = int(dim * mlp_ratio)
+        self.mlp = Mlp(in_features=dim, hidden_features=mlp_hidden_dim, act_layer=act_layer, drop=drop)
+
+    def forward(self, x, q):
+        x = x + self.pos_embed(x)
+        x = x.flatten(2).transpose(1, 2)
+        x = self.drop_path(self.attn(self.norm1(x), q))
+        x = x + self.drop_path(self.mlp(self.norm2(x)))
+        return x
+
+
 class Colour_Quantisation(nn.Module):
-    def __init__(self, temperature=0.05, num_colours=2, num_heads=4, dim=160):
+    def __init__(self, temperature=0.05, num_colours=2, num_heads=4):
         super().__init__()
         self.num_colors = num_colours
         self.Spectral_Reconstruction = MST_Plus_Plus()
@@ -152,18 +221,31 @@ class Colour_Quantisation(nn.Module):
         self.LMS_Projection = LMS_Projection()
         self.Image_Encoder = UNext(num_classes=num_colours)
         self.temperature = temperature
-        self.Colour_Cluster_Transformer = Colour_Cluster_Transformer(dim=dim,
-                                                                     num_colours=num_colours,
-                                                                     num_heads=num_heads)
-        self.Colour_Coordinate_Projection = Mlp(in_features=dim, hidden_features=dim, out_features=3)
+        self.Colour_Cluster_Transformer_1 = Colour_Cluster_Transformer(dim=160, num_colours=num_colours,
+                                                                       num_heads=num_heads)
+
+        self.Colour_Cluster_Transformer_2 = Subsequent_Colour_Cluster_Transformer(dim=128, input_q_dim=160,
+                                                                                  num_colours=num_colours,
+                                                                                  num_heads=num_heads)
+        self.Colour_Cluster_Transformer_3 = Subsequent_Colour_Cluster_Transformer(dim=32, input_q_dim=128,
+                                                                                  num_colours=num_colours,
+                                                                                  num_heads=num_heads)
+        self.Colour_Cluster_Transformer_4 = Subsequent_Colour_Cluster_Transformer(dim=16, input_q_dim=32,
+                                                                                  num_colours=num_colours,
+                                                                                  num_heads=num_heads)
+        self.Colour_Coordinate_Projection = Mlp(in_features=16, hidden_features=16, out_features=3)
         self.sigmoid = nn.Sigmoid()
         self.convertor = RGB_HSV()
 
     def forward(self, x_RGB, training=True):
-        # HSI = self.Spectral_Reconstruction(x_RGB)
-        # LMS = self.LMS_Projection(HSI)
-        probability_map, low_resolution_feature = self.Image_Encoder(x_RGB)
-        updated_colour_query = self.Colour_Cluster_Transformer(low_resolution_feature)  # torch.Size([3, 4, 128])
+        HSI = self.Spectral_Reconstruction(x_RGB)
+        LMS = self.LMS_Projection(HSI)
+        probability_map, low_resolution_feature = self.Image_Encoder(LMS)
+        updated_colour_query = self.Colour_Cluster_Transformer_1(low_resolution_feature[0])  # torch.Size([3, 4, dim])
+        updated_colour_query = self.Colour_Cluster_Transformer_2(low_resolution_feature[1],updated_colour_query)  # torch.Size([3, 4, dim])
+        updated_colour_query = self.Colour_Cluster_Transformer_3(low_resolution_feature[2],updated_colour_query)  # torch.Size([3, 4, dim])
+        updated_colour_query = self.Colour_Cluster_Transformer_4(low_resolution_feature[3],updated_colour_query)  # torch.Size([3, 4, dim])
+
         colour_palette = self.Colour_Coordinate_Projection(updated_colour_query)  # torch.Size([3, 4, 2])
         colour_palette = self.sigmoid(colour_palette)
         colour_palette = colour_palette.permute(0, 2, 1).unsqueeze(-1).unsqueeze(-1)
@@ -186,14 +268,13 @@ class Colour_Quantisation(nn.Module):
             # return transformed_img, probability_map
 
 
-
 if __name__ == "__main__":
     img = torch.randn((2, 3, 32, 32))
     model = Colour_Quantisation(num_colours=2)
     transformed_img, probability_map = model(img, training=True)
-    prob_mean = torch.mean(probability_map, dim=[2, 3])
 
-    Shannon_entropy = -prob_mean * torch.log2(prob_mean)
+    prob_mean = torch.mean(probability_map, dim=[2, 3])
+    Shannon_entropy = -prob_mean * torch.log2(torch.tensor([1e-8]) +prob_mean)
     Shannon_entropy = torch.mean(Shannon_entropy)
-    print(transformed_img.shape)
+    print(prob_mean.shape)
     print(Shannon_entropy)

@@ -36,7 +36,7 @@ def main():
     parser.add_argument('--num_colors', type=int, default=2)
     parser.add_argument('--alpha', type=float, default=1,
                         help='multiplier of regularization terms')
-    parser.add_argument('--beta', type=float, default=0.5,
+    parser.add_argument('--beta', type=float, default=1,
                         help='multiplier of regularization terms')
     parser.add_argument('--gamma', type=float, default=1,
                         help='multiplier of reconstruction loss')
@@ -45,9 +45,9 @@ def main():
     parser.add_argument('-d', '--dataset', type=str, default='cifar100',
                         choices=['cifar10', 'cifar100', 'stl10', 'svhn', 'imagenet', 'tiny200'])
     parser.add_argument('-j', '--num_workers', type=int, default=8)
-    parser.add_argument('-b', '--batch_size', type=int, default=256, metavar='N',
+    parser.add_argument('-b', '--batch_size', type=int, default=128, metavar='N',
                         help='input batch size for training (default: 128)')
-    parser.add_argument('--epochs', type=int, default=200,
+    parser.add_argument('--epochs', type=int, default=120,
                         metavar='N', help='number of epochs to train (default: 10)')
     parser.add_argument('--lr', type=float, default=0.05,
                         metavar='LR', help='learning rate (default: 0.1)')
@@ -72,7 +72,7 @@ def main():
 
     # dataset
     data_path = os.path.expanduser('/home/ssh685/CV_project_ICLR2023/Colour-Quantisation-main/Data/') + args.dataset
-    # dataroot = '/home/ssh685/CV_project_ICLR2023/Colour-Quantisation-main/Data/'
+    dataroot = '/home/ssh685/CV_project_ICLR2023/Colour-Quantisation-main/Data_1/'
 
     if args.dataset == 'cifar10' or args.dataset == 'cifar100':
         H, W, C = 32, 32, 3
@@ -81,7 +81,7 @@ def main():
         normalize = T.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))
         train_trans = T.Compose([T.RandomCrop(32, padding=4), T.RandomHorizontalFlip(), T.ToTensor(), ])
         test_trans = T.Compose([T.ToTensor(), ])
-
+        visualise_set = CIFAR10_CIFAR100_Dataset_for_visualise(dataroot=dataroot)
         if args.dataset == 'cifar10':
             train_set = datasets.CIFAR10(data_path, train=True, download=True, transform=train_trans)
             test_set = datasets.CIFAR10(data_path, train=False, download=True, transform=test_trans)
@@ -91,6 +91,7 @@ def main():
     elif args.dataset == 'stl10':
         H, W, C = 96, 96, 3
         num_class = 10
+        args.batch_size = 32
         # smaller batch size
         normalize = T.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
         train_trans = T.Compose([T.RandomCrop(96, padding=12), T.RandomHorizontalFlip(), T.ToTensor(), ])
@@ -102,10 +103,12 @@ def main():
         num_class = 200
         normalize = T.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
         train_trans = T.Compose([T.RandomCrop(64, padding=8), T.RandomHorizontalFlip(), T.ToTensor(), ])
-        test_trans = T.Compose([T.ToTensor(),])
+        test_trans = T.Compose([T.ToTensor(), ])
 
-        train_set = datasets.ImageFolder('/home/ssh685/CV_project_AAAI2023/color_distillation-master/Data/tiny200/train', transform=train_trans)
-        test_set = datasets.ImageFolder('/home/ssh685/CV_project_AAAI2023/color_distillation-master/Data/tiny200/val', transform=test_trans)
+        train_set = datasets.ImageFolder(
+            '/home/ssh685/CV_project_AAAI2023/color_distillation-master/Data/tiny200/train', transform=train_trans)
+        test_set = datasets.ImageFolder('/home/ssh685/CV_project_AAAI2023/color_distillation-master/Data/tiny200/val',
+                                        transform=test_trans)
     else:
         raise Exception
 
@@ -114,11 +117,11 @@ def main():
     test_loader = torch.utils.data.DataLoader(test_set, batch_size=args.batch_size, shuffle=False,
                                               num_workers=args.num_workers, pin_memory=True)
 
-    visualise_loader = torch.utils.data.DataLoader(test_set, batch_size=1, shuffle=False,
-                                                   num_workers=args.num_workers, pin_memory=True)
+    # visualise_loader = torch.utils.data.DataLoader(visualise_set, batch_size=1, shuffle=False,
+    #                                                num_workers=args.num_workers, pin_memory=True)
     time = datetime.datetime.today().strftime('%Y-%m-%d_%H-%M-%S')
     print(time)
-    logdir = 'logs/CQ/{}/{}_colours/{}/'.format(args.dataset, args.num_colors, time)
+    logdir = 'logs/CQ_new/{}/{}_colours/{}/'.format(args.dataset, args.num_colors, time)
     if args.resume is None:
         os.makedirs(logdir, exist_ok=True)
         copy_tree('./models', logdir + '/scripts/model')
@@ -140,7 +143,7 @@ def main():
     classifier = ResNet18(out_channel=num_class).cuda()
     optimizer = optim.SGD(list(model.parameters()) + list(classifier.parameters()),
                           lr=args.lr, momentum=args.momentum, weight_decay=args.weight_decay)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, 50, 1)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=30, T_mult=1)
 
     # loss
 
@@ -154,9 +157,7 @@ def main():
     og_test_prec_s = []
     best_acc = 0
     trainer = CNNTrainer_1(model, criterion, args.num_colors,
-                         classifier, args.alpha, args.beta, args.gamma)
-
-    # learn
+                           classifier, args.alpha, args.beta, args.gamma)
 
     for epoch in range(1, args.epochs + 1):
         print('Training...')
@@ -184,29 +185,31 @@ def main():
             torch.save(classifier.state_dict(), os.path.join(
                 logdir, 'classifier_epoch{}.pth'.format(epoch)))
         print('best acc: {}'.format(best_acc * 100))
-    save_img_dir = 'logs/visualise_RGB/{}/{}_colours/{}/'.format(
-        args.dataset, args.num_colors, time)
-    if not os.path.exists(save_img_dir):
-        os.makedirs(save_img_dir)
 
-    for batch_idx, (rgb, hsv, target, class_name, image_name) in enumerate(visualise_loader):
-        model.eval()
-        rgb, hsv, target = rgb.cuda(), hsv.cuda(), target.cuda()
-        with torch.no_grad():
-            transformed_img_rgb, _ = model(rgb, training=False)
-        transformed_img_rgb = transformed_img_rgb.squeeze().permute(1, 2, 0).detach().cpu().numpy()
-        transformed_img_rgb = transformed_img_rgb + max(-np.min(transformed_img_rgb), 0)
-        transformed_img_max = np.max(transformed_img_rgb)
-        if transformed_img_max != 0:
-            transformed_img_rgb /= transformed_img_max
-        transformed_img_rgb *= 255
-        transformed_img_rgb = transformed_img_rgb.astype('uint8')
-
-        transformed_img_rgb = Image.fromarray(transformed_img_rgb)
-        save_img_class_dir = os.path.join(save_img_dir, class_name[0])
-        if not os.path.exists(save_img_class_dir):
-            os.makedirs(save_img_class_dir)
-        transformed_img_rgb.save(os.path.join(save_img_class_dir, image_name[0]))
+    # if args.dataset == 'cifar10' or args.dataset == 'cifar100':
+    #     save_img_dir = 'logs/visualise_RGB/{}/{}_colours/{}/'.format(
+    #         args.dataset, args.num_colors, time)
+    #     if not os.path.exists(save_img_dir):
+    #         os.makedirs(save_img_dir)
+    #
+    #     for batch_idx, (rgb, hsv, target, class_name, image_name) in enumerate(visualise_loader):
+    #         model.eval()
+    #         rgb, hsv, target = rgb.cuda(), hsv.cuda(), target.cuda()
+    #         with torch.no_grad():
+    #             transformed_img_rgb, _ = model(rgb, training=False)
+    #         transformed_img_rgb = transformed_img_rgb.squeeze().permute(1, 2, 0).detach().cpu().numpy()
+    #         transformed_img_rgb = transformed_img_rgb + max(-np.min(transformed_img_rgb), 0)
+    #         transformed_img_max = np.max(transformed_img_rgb)
+    #         if transformed_img_max != 0:
+    #             transformed_img_rgb /= transformed_img_max
+    #         transformed_img_rgb *= 255
+    #         transformed_img_rgb = transformed_img_rgb.astype('uint8')
+    #
+    #         transformed_img_rgb = Image.fromarray(transformed_img_rgb)
+    #         save_img_class_dir = os.path.join(save_img_dir, class_name[0])
+    #         if not os.path.exists(save_img_class_dir):
+    #             os.makedirs(save_img_class_dir)
+    #         transformed_img_rgb.save(os.path.join(save_img_class_dir, image_name[0]))
 
 
 if __name__ == '__main__':

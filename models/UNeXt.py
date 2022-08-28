@@ -36,6 +36,23 @@ def conv1x1(in_planes: int, out_planes: int, stride: int = 1) -> nn.Conv2d:
 #     x_cat = torch.narrow(x_cat, 3, self.pad, W)
 #     return x_cat
 
+# class double_conv(nn.Module):
+#     '''(conv => BN => ReLU) * 2'''
+#
+#     def __init__(self, in_ch, out_ch):
+#         super(double_conv, self).__init__()
+#         self.conv = nn.Sequential(
+#             nn.Conv2d(in_ch, out_ch, 3, padding=1),
+#             nn.BatchNorm2d(out_ch),
+#             nn.ReLU(inplace=True),
+#             nn.Conv2d(out_ch, out_ch, 3, padding=1),
+#             nn.BatchNorm2d(out_ch),
+#             nn.ReLU(inplace=True)
+#         )
+#
+#     def forward(self, x):
+#         x = self.conv(x)
+#         return x
 
 class shiftmlp(nn.Module):
     def __init__(self, in_features, hidden_features=None, out_features=None, act_layer=nn.GELU, drop=0., shift_size=5):
@@ -213,12 +230,18 @@ class UNext(nn.Module):
         super().__init__()
 
         self.encoder1 = nn.Conv2d(3, 16, 3, stride=1, padding=1)
+        self.encoder1_ = nn.Conv2d(16, 16, 3, stride=1, padding=1)
         self.encoder2 = nn.Conv2d(16, 32, 3, stride=1, padding=1)
+        self.encoder2_ = nn.Conv2d(32, 32, 3, stride=1, padding=1)
         self.encoder3 = nn.Conv2d(32, 128, 3, stride=1, padding=1)
+        self.encoder3_ = nn.Conv2d(128, 128, 3, stride=1, padding=1)
 
         self.ebn1 = nn.BatchNorm2d(16)
+        self.ebn1_ = nn.BatchNorm2d(16)
         self.ebn2 = nn.BatchNorm2d(32)
+        self.ebn2_ = nn.BatchNorm2d(32)
         self.ebn3 = nn.BatchNorm2d(128)
+        self.ebn3_ = nn.BatchNorm2d(128)
 
         self.norm3 = norm_layer(embed_dims[1])
         self.norm4 = norm_layer(embed_dims[2])
@@ -269,19 +292,22 @@ class UNext(nn.Module):
         self.soft = nn.Softmax(dim=1)
 
     def forward(self, x):
-
+        low_resolution_feature=[]
         B = x.shape[0]
         ### Encoder
         ### Conv Stage
 
         ### Stage 1
-        out = F.relu(F.max_pool2d(self.ebn1(self.encoder1(x)), 2, 2))
+        out = self.ebn1_(self.encoder1_(F.relu(self.ebn1(self.encoder1(x)))))
+        out = F.relu(F.max_pool2d(out, 2, 2))
         t1 = out
         ### Stage 2
-        out = F.relu(F.max_pool2d(self.ebn2(self.encoder2(out)), 2, 2))
+        out = self.ebn2_(self.encoder2_(F.relu(self.ebn2(self.encoder2(out)))))
+        out = F.relu(F.max_pool2d(out, 2, 2))
         t2 = out
         ### Stage 3
-        out = F.relu(F.max_pool2d(self.ebn3(self.encoder3(out)), 2, 2))
+        out = self.ebn3_(self.encoder3_(F.relu(self.ebn3(self.encoder3(out)))))
+        out = F.relu(F.max_pool2d(out, 2, 2))
         t3 = out
 
         ### Tokenized MLP Stage
@@ -293,7 +319,7 @@ class UNext(nn.Module):
         out = self.norm3(out)
         out = out.reshape(B, H, W, -1).permute(0, 3, 1, 2).contiguous()
         t4 = out
-        low_resolution_feature = out
+
         ### Bottleneck
 
         out, H, W = self.patch_embed4(out)
@@ -307,6 +333,7 @@ class UNext(nn.Module):
         out = F.relu(F.interpolate(self.dbn1(self.decoder1(out)), scale_factor=(2, 2), mode='bilinear'))
 
         out = torch.add(out, t4)
+        low_resolution_feature.append(out)  # torch.Size([3, 160, 2, 2])
         _, _, H, W = out.shape
         out = out.flatten(2).transpose(1, 2)
         for i, blk in enumerate(self.dblock1):
@@ -315,10 +342,10 @@ class UNext(nn.Module):
         ### Stage 3
 
         out = self.dnorm3(out)
-
         out = out.reshape(B, H, W, -1).permute(0, 3, 1, 2).contiguous()
         out = F.relu(F.interpolate(self.dbn2(self.decoder2(out)), scale_factor=(2, 2), mode='bilinear'))
-        out = torch.add(out, t3)
+        out = torch.add(out, t3)  # torch.Size([3, 128, 4, 4])
+        low_resolution_feature.append(out)
         _, _, H, W = out.shape
         out = out.flatten(2).transpose(1, 2)
 
@@ -329,12 +356,14 @@ class UNext(nn.Module):
         out = out.reshape(B, H, W, -1).permute(0, 3, 1, 2).contiguous()
 
         out = F.relu(F.interpolate(self.dbn3(self.decoder3(out)), scale_factor=(2, 2), mode='bilinear'))
-        out = torch.add(out, t2)
+        out = torch.add(out, t2)  # torch.Size([3, 32, 8, 8])
+        low_resolution_feature.append(out)
         out = F.relu(F.interpolate(self.dbn4(self.decoder4(out)), scale_factor=(2, 2), mode='bilinear'))
-        out = torch.add(out, t1)
+        out = torch.add(out, t1)  # torch.Size([3, 16, 16, 16])
+        low_resolution_feature.append(out)
         out = F.relu(F.interpolate(self.decoder5(out), scale_factor=(2, 2), mode='bilinear'))
 
-        return self.final(out),low_resolution_feature
+        return self.final(out), low_resolution_feature
 
 
 class UNext_S(nn.Module):
@@ -476,10 +505,11 @@ class UNext_S(nn.Module):
 
 
 if __name__ == '__main__':
-    img = torch.randn((3, 3, 64, 64))
+    img = torch.randn((3, 3, 32, 32))
     model = UNext(num_classes=4)
     output, low_resolution_feature = model(img)
     print(output.shape)
-    print(low_resolution_feature.shape)
+    for x in low_resolution_feature:
+        print(x.shape)
 # torch.Size([3, 4, 256, 256])
 # torch.Size([3, 64, 128])
