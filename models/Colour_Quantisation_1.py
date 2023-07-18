@@ -121,7 +121,6 @@ class Colour_Quantisation(nn.Module):
                                                                      num_heads=num_heads)
         self.Colour_Coordinate_Projection = Mlp(in_features=out_channels, hidden_features=out_channels, out_features=3)
         self.sigmoid = nn.Sigmoid()
-        self.tanh = nn.Tanh()
         self.softmax = nn.Softmax2d()
         self.apply(self._init_weights)
 
@@ -152,88 +151,8 @@ class Colour_Quantisation(nn.Module):
             transformed_img = (index_map_one_hot.unsqueeze(1) * colour_palette).sum(dim=2)# !!!!!!!!!!!!!!!!!!!!!
             return transformed_img, index_map_one_hot
 
-
-class Colour_Quantisation_tanh(nn.Module):
-    def __init__(self, temperature=0.01, num_colours=2, num_heads=4,out_channels = 256):
-        super().__init__()
-        self.num_colors = num_colours
-        self.Image_Encoder = UNext(num_classes=num_colours)
-        self.conv_large = conv_embedding(3, out_channels)
-        self.temperature = temperature
-        self.Colour_Cluster_Transformer = Colour_Cluster_Transformer(dim=out_channels, num_colours=num_colours,
-                                                                     num_heads=num_heads)
-        self.Colour_Coordinate_Projection = Mlp(in_features=out_channels, hidden_features=out_channels, out_features=3)
-        self.sigmoid = nn.Sigmoid()
-        self.tanh = nn.Tanh()
-        self.softmax = nn.Softmax2d()
-        self.apply(self._init_weights)
-
-    def _init_weights(self, m):
-        if isinstance(m, nn.Linear):
-            trunc_normal_(m.weight, std=.02)
-            if isinstance(m, nn.Linear) and m.bias is not None:
-                nn.init.constant_(m.bias, 0)
-        elif isinstance(m, nn.LayerNorm):
-            nn.init.constant_(m.bias, 0)
-            nn.init.constant_(m.weight, 1.0)
-            
-    def forward(self, x_RGB, training=True):
-        origin_probability_map, _ = self.Image_Encoder(x_RGB)
-        origin_probability_map = self.softmax(origin_probability_map)
-        updated_colour_query = self.Colour_Cluster_Transformer(self.conv_large(x_RGB))  # torch.Size([3, 4, dim])
-        colour_palette = self.Colour_Coordinate_Projection(updated_colour_query)  # torch.Size([3, 4, 2])
-        colour_palette = self.tanh(colour_palette)
-        colour_palette = colour_palette.permute(0, 2, 1).unsqueeze(-1).unsqueeze(-1)# torch.Size([b, 3, n,1,1])
-        if training:
-            probability_map = self.softmax(origin_probability_map / self.temperature)  # torch.Size([3, 4, 256, 256])
-            transformed_img = (probability_map.unsqueeze(1) * colour_palette).sum(dim=2)
-            return transformed_img, probability_map
-        else:
-            probability_map = self.softmax(origin_probability_map)   # torch.Size([3, 4, 256, 256])
-            index_map = torch.argmax(probability_map, dim=1, keepdim=True)
-            index_map_one_hot = torch.zeros_like(probability_map).scatter(1, index_map, 1)
-            transformed_img = (index_map_one_hot.unsqueeze(1) * colour_palette).sum(dim=2)# !!!!!!!!!!!!!!!!!!!!!
-            return transformed_img, index_map_one_hot
-
 if __name__ == "__main__":
-    # from fvcore.nn import FlopCountAnalysis ,flop_count_table
-    # from thop import profile
-    
-    # device = torch.device("cuda:0")
-    # img = torch.randn((1, 3, 32, 32)).to(device)
-    # iterations = 300  
-    # model = Colour_Quantisation(num_colours=2).to(device)
-    
-    # total = sum([param.nelement() for param in model.parameters()])
-    # print("Number of parameter: %.3fM" % (total / 1e6))
-    # random_input = torch.randn(1, 3, 224, 224).to(device)
-    # starter, ender = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
-    # # GPU预热
-    # for _ in range(50):
-    #     _ = model(random_input)
-
-    # # 测速
-    # times = torch.zeros(iterations)     # 存储每轮iteration的时间
-    # with torch.no_grad():
-    #     for iter in range(iterations):
-    #         starter.record()
-    #         _ = model(random_input)
-    #         ender.record()
-    #         # 同步GPU时间
-    #         torch.cuda.synchronize()
-    #         curr_time = starter.elapsed_time(ender) # 计算时间
-    #         times[iter] = curr_time
-    #         # print(curr_time)
-
-    # mean_time = times.mean().item()
-    # print("Inference time: {:.6f}, FPS: {} ".format(mean_time, 1000/mean_time))
-
-    # flops, params = profile(model, inputs=(random_input,))
-    # print("FLOPs=", str(flops / 1e9) + '{}'.format("G"))
-    # print("FLOPs=", str(flops / 1e6) + '{}'.format("M"))
-
     device = torch.device("cuda:7")
-
     img = torch.randn((2, 3, 256, 256)).to(device)
     model = Colour_Quantisation(num_colours=2).to(device)
     output = model(img)
