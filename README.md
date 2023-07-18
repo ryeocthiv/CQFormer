@@ -3,6 +3,7 @@
 **2023.7.14: Papar accepted by ICCV 2023!** 
 
 Some of the code are borrow from [ColorCNN](https://github.com/hou-yz/color_distillation) and [IAT](https://github.com/cuiziteng/Illumination-Adaptive-Transformer), thanks them so much!
+The code of Colour Evolution will be released soon~
 
 If this code or paper help you, please cite as follow, thx~
 
