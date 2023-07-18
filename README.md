@@ -49,7 +49,8 @@ $ conda env create -f environment.yml
 ```
 
 <br/>
-## Visualise
+
+## Visualise:
 <div align="center">
   <img src="./images/colourful1.png">
 </div>
