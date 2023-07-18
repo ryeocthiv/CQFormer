@@ -49,3 +49,10 @@ $ conda env create -f environment.yml
 ```
 
 <br/>
+## Visualise
+<div align="center">
+  <img src="./images/colourful1.png">
+</div>
+<p align="center">
+  Figure 3: 8-colour quantised images by CQFomer..
+</p>
