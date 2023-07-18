@@ -112,7 +112,7 @@ def main():
 
     time = datetime.datetime.today().strftime('%Y-%m-%d_%H-%M-%S')
     print(time)
-    logdir = 'logs/CQ3/{}/{}_colours/{}/'.format(args.dataset, args.num_colors, time)
+    logdir = 'logs/CQ/{}/{}_colours/{}/'.format(args.dataset, args.num_colors, time)
     args.epochs = min(args.epochs + (args.num_colors-2)*20, 300)
     if args.resume is None:
         os.makedirs(logdir, exist_ok=True)
@@ -171,7 +171,7 @@ def main():
         print('best acc: {}'.format(best_acc * 100))
     
     result_str = '{:.1f}\t'.format(100*best_acc)
-    result_dir = 'logs/CQ3/CQformer_results_3/'
+    result_dir = 'logs/CQ/CQformer_results/'
     os.makedirs(os.path.dirname(result_dir), exist_ok=True)
     with open(os.path.join(result_dir, '{}.txt'.format(args.dataset)),'a') as f:
         f.write(result_str)
