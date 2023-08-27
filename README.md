@@ -1,6 +1,6 @@
 # Name Your Colour For the Task: Artificially Discover Colour Naming via Colour Quantisation Transformer
 
-**2023.7.14: Papar accepted by ICCV 2023!** 
+**2023.7.14: Papar is accepted by ICCV 2023 Oral !** 
 
 Some of the code are borrow from [ColorCNN](https://github.com/hou-yz/color_distillation) and [IAT](https://github.com/cuiziteng/Illumination-Adaptive-Transformer), thanks them so much!
 The code of Colour Evolution will be released soon~
