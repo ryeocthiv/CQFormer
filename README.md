@@ -8,11 +8,13 @@ The code of Colour Evolution will be released soon~
 If this code or paper help you, please cite as follow, thx~
 
 ```
-@article{su2022name,
-  title={Name Your Colour For the Task: Artificially Discover Colour Naming via Colour Quantisation Transformer},
-  author={Su, Shenghan and Gu, Lin and Cui, Ziteng and Yang, Yue and Shen, Jingjing and Yamane, Hiroaki and Zhang, Zenghui and Harada, Tatsuya},
-  journal={arXiv preprint arXiv:2212.03434},
-  year={2022}
+@InProceedings{Su_2023_ICCV,
+    author    = {Su, Shenghan and Gu, Lin and Yang, Yue and Zhang, Zenghui and Harada, Tatsuya},
+    title     = {Name Your Colour For the Task: Artificially Discover Colour Naming via Colour Quantisation Transformer},
+    booktitle = {Proceedings of the IEEE/CVF International Conference on Computer Vision (ICCV)},
+    month     = {October},
+    year      = {2023},
+    pages     = {12021-12031}
 }
 ```
 
